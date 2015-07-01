@@ -1,8 +1,6 @@
 param(
 [string]$Email
 )
-#Output for error possible debug message in perl script
-Get-ADUser -filter {EmailAddress -like $Email}
 #Set variables, perform terminate procedures on user account
 $Username = Get-ADUser -filter {EmailAddress -like $Email}
 $TermDate = Get-Date -UFormat "%Y-%m-%d"
@@ -16,3 +14,5 @@ ForEach ($Group in $GroupArray)
 	{
 	Remove-ADGroupMember -Identity $Group -Member $Username.SAMaccountName -Confirm:$false
 	}
+#Output for error possible debug message in perl script
+Get-ADUser -filter {EmailAddress -like $Email}
