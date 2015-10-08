@@ -2,9 +2,10 @@ param(
 [string]$Email
 )
 #Set variables, perform terminate procedures on user account
+$OUPath = "Path to OU for Termed users"
 $Username = Get-ADUser -filter {EmailAddress -like $Email}
 $TermDate = Get-Date -UFormat "%Y-%m-%d"
-Move-ADObject  $Username -TargetPath "OU=TermedUsers,OU=Actian Corporation,DC=Actian,DC=com"
+Move-ADObject  $Username -TargetPath $OUPath
 Set-ADUser $Username.SAMAccountName -Clear Department,Title,telephoneNumber,Company,Manager,Mobile,HomePhone
 Set-ADUser $Username.SAMAccountName -Replace @{Description="Termed "+ $TermDate}
 Set-ADUser $Username.SAMAccountName -Enabled $False
