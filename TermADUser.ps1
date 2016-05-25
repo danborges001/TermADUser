@@ -36,8 +36,8 @@ Function Set-ADAccount(){
 
 #Archives group membership and e-mails to a person if option is selected, then removes group memberships
 
-Function Remove-GroupMemberships(){	
-	$GroupArray = Get-ADPrincipalGroupMembership $UserName `
+Function Remove-GroupMemberships(){
+	$GroupArray = Get-ADPrincipalGroupMembership $UserName.SAMAccountName `
 	| Where-Object {$_.Name -ne "Domain Users"}	
 	
 	
@@ -49,7 +49,7 @@ Function Remove-GroupMemberships(){
 			
 			Send-MailMessage `
 			-To "$ArchiveRequester" `
-			-From "" `
+			-From "Termination Script <noreply@actian.com>" `
 			-Subject "User Group Membership for $Email" `
 			-Body "File attached" `
 			-Attachments "$HOME\$Email.txt" `
@@ -87,11 +87,20 @@ Function Connect-ExchangeOnline(){
 #This function removes any mobile devices linked to the exchange mailbox
 
 Function Remove-MobileDevices(){
-	Write-Host "Removing Mobile Devices"	
+	$SavedErrorAction=$Global:ErrorActionPreference
+    $Global:ErrorActionPreference='stop'
+	Try{
+		Write-Host "Removing Mobile Devices"	
 	
-	Get-MobileDevice -MailBox $Email | Remove-MobileDevice -Confirm:$False
+		Get-MobileDevice -MailBox $Email | Remove-MobileDevice -Confirm:$False
 	
-	Write-Host "Done!"
+		Write-Host "Done!"
+	}Catch [System.Management.Automation.RemoteException]{
+		$ErrorCode = $Error[0].Exception
+		Write-Host $ErrorCode
+	}Finally{
+        $Global:ErrorActionPreference=$SavedErrorAction
+	}
 }
 
 #This function removes the Exchange Unified Messaging voice mail box
@@ -115,66 +124,78 @@ Function Disable-UnifiedMessaging(){
 
 #This function converts the user mailbox to shared and removes the E4 O365 license
 
-Function Convert-MailBox(){	
-	Write-Host "Converting user mailbox into a shared mailbox"
-	
+Function Convert-MailBox(){
 	$SavedErrorAction=$Global:ErrorActionPreference
-    $Global:ErrorActionPreference='stop'
-	
-	Set-Mailbox $Email -Type Shared
-	$IsShared=(Get-MailBox $Email).IsShared
-	
-	Write-Host "Done!"
-	Write-Host "Waiting for O365 to report that the mailbox is shared before unlicensing..."
-	
-	Start-Sleep -s 10
-	If ($IsShared -eq $False){
-		While($IsShared -eq $False){
-			$IsShared=(Get-MailBox $Email).IsShared
-			Write-Host "."
-			Start-Sleep -s 10
-		}		
-	}
-	If ($IsShared -eq $True){
-		Try{
-			Write-Host "Removing MSOL license"
-			
-			Set-MSOLUserLicense `
-			-UserPrincipalName $Email `
-			-RemoveLicenses ""
-			
-			Write-Host "Done!"
-		}Catch{
-			$ErrorCode = $Error[0].Exception
-			Write-Host $ErrorCode
-		}Finally{
-			$Global:ErrorActionPreference=$SavedErrorAction
-		}
-	}
-}
-
-#This function removes the Lync account
-
-Function Disable-Lync(){
-	$LyncSession = New-PSSession `
-	-ConnectionURI "" `
-	-Credential $UserCredential
-	
-	Import-PsSession $LyncSession
-	
-	$SavedErrorAction = $Global:ErrorActionPreference
-    $Global:ErrorActionPreference='stop'
-    Try{
-		Write-Host "Disabling Lync"
+    $Global:ErrorActionPreference='stop'    
+	Try{
+		Get-Mailbox -Identity $Email
+		Write-Host "Converting user mailbox into a shared mailbox"
 		
-		Disable-CSUser $Email
+		$SavedErrorAction=$Global:ErrorActionPreference
+		$Global:ErrorActionPreference='stop'
+		
+		Set-Mailbox $Email -Type Shared
+		$IsShared=(Get-MailBox $Email).IsShared
 		
 		Write-Host "Done!"
-    }Catch [System.Management.Automation.RemoteException]{
+		Write-Host "Waiting for O365 to report that the mailbox is shared before unlicensing..."
+		
+		Start-Sleep -s 10
+		If ($IsShared -eq $False){
+			While($IsShared -eq $False){
+				$IsShared=(Get-MailBox $Email).IsShared
+				Write-Host "."
+				Start-Sleep -s 10
+			}		
+		}
+		If ($IsShared -eq $True){
+			Try{
+				Write-Host "Removing MSOL license"
+				
+				Set-MSOLUserLicense `
+				-UserPrincipalName $Email `
+				-RemoveLicenses ""
+				
+				Write-Host "Done!"
+			}Catch{
+				$ErrorCode = $Error[0].Exception
+				Write-Host $ErrorCode
+			}Finally{
+				$Global:ErrorActionPreference=$SavedErrorAction
+			}
+		}
+	}Catch [System.Management.Automation.RemoteException]{
 		$ErrorCode = $Error[0].Exception
 		Write-Host $ErrorCode
 	}Finally{
         $Global:ErrorActionPreference=$SavedErrorAction
+	}
+}
+
+
+#This function removes the Lync account
+
+Function Disable-Lync(){
+	If (!((Get-PSSession).ComputerName -Like "")){
+		$LyncSession = New-PSSession `
+		-ConnectionURI "" `
+		-Credential $UserCredential
+		
+		Import-PsSession $LyncSession
+	}
+	$SavedErrorAction = $Global:ErrorActionPreference
+	$Global:ErrorActionPreference='stop'
+	Try{
+		Write-Host "Disabling Lync"
+			
+		Disable-CSUser $Email
+			
+		Write-Host "Done!"
+	}Catch [System.Management.Automation.RemoteException]{
+		$ErrorCode = $Error[0].Exception
+		Write-Host $ErrorCode
+	}Finally{
+		$Global:ErrorActionPreference=$SavedErrorAction
 	}
 }
 
@@ -183,7 +204,6 @@ Function Disable-Lync(){
 Function Get-FileName(){    
     $OpenFileDialog = New-Object System.Windows.Forms.OpenFileDialog
 	$OpenFileDialog.InitialDirectory = $HOME
-    $OpenFileDialog.Filter = "CSV (*.csv)| *.csv"
     $OpenFileDialog.ShowDialog() | Out-Null
     $OpenFileDialog.Filename
 }
@@ -203,35 +223,19 @@ Function End-Sessions(){
 	Get-PSSession | Remove-PSSession
 }
 
-#Function to set variables for the script
-
-Function Get-Variables(){
-	$Script:Email = $Textbox1.Text
-	$Script:UserName = (Get-ADuser -Filter {EmailAddress -Like $Email})
-	$Script:SAMAccount = $UserName.SAMAccountName
-	
-	If ($RadioButton1.Checked -eq $True){
-		$Script:InputFile = Get-FileName
-		$Script:Emails = Import-CSV $InputFile
-	}Else{
-		$Script:Emails = $Textbox1.Text
-	}
-	If ($RadioButton4.Checked -eq $True){
-		$Script:ArchiveRequester = $Textbox2.Text
-	}
-	Validate-Input
-}
-
 #Validates that the e-mail address for the user to be terminated is valid
 
-Function Validate-Input(){
+Function Validate-Input(){	
+	$Script:UserName = (Get-ADuser -Filter {EmailAddress -Like $Email})
+	$Script:SAMAccount = $UserName.SAMAccountName
+		
 	Try{
 		Get-ADUser $SAMAccount
 		Show-Announcement "User $SAMAccount validated, continuing..."
 	}Catch{
-		Show-Announcement "The e-mail address you entered did not work, please enter a new e-mail address:"
+		Show-Announcement "The e-mail address you entered for $Email did not work, please enter a new e-mail address:"
 		Show-Form2
-	}
+	}	
 }
 
 #Pop-up that alerts the user that the script is finished
@@ -243,8 +247,18 @@ Function show-announcement($Message){
 #Logic of the script runs the 2 guaranteed functions and then depending on the checkboxes checked, runs those triggers by OK button
 
 Function Button-Click(){
-	Get-Variables
+	If ($RadioButton1.Checked -eq $True){
+		$Script:InputFile = Get-FileName
+		$Script:Emails = Get-Content $InputFile
+	}Else{
+		$Script:Emails = $Textbox1.Text
+	}
+	If ($RadioButton4.Checked -eq $True){
+		$Script:ArchiveRequester = $Textbox2.Text
+	}
 	ForEach ($Email in $Emails){
+		Validate-Input
+		$Script:UserName = (Get-ADuser -Filter {EmailAddress -Like $Email})
 		If ($Checkbox5.Checked -eq $True){
 			Set-ADAccount
 			Remove-GroupMemberships
@@ -413,8 +427,6 @@ Function Show-Form(){
 	$RadioButton4.Add_Click({$Textbox2.Enabled = $True})
 	$GroupBox2.Controls.Add($RadioButton4)
 
-	$Form.Topmost = $True
-
 	$Form.Add_Shown({$Form.Activate()})
 	[void] $Form.ShowDialog()
 
@@ -452,9 +464,7 @@ Function Show-Form2(){
 	$TextBox1.Location = New-Object System.Drawing.Size(10,40)
 	$TextBox1.Size = New-Object System.Drawing.Size(260,40)
 	$Form2.Controls.Add($TextBox1)
-
-	$Form2.Topmost = $True
-
+	
 	$Form2.Add_Shown({$Form2.Activate()})
 	[void] $Form2.ShowDialog()
 
